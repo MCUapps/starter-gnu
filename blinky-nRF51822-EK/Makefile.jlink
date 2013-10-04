@@ -1,0 +1,80 @@
+# JLink as the programmer
+JLINK_ROOT := /opt/JLink
+SOFTDEVICE := $(SDK_PATH)/../../../s110_nrf51822_6.0.0-1.alpha/s110_nrf51822_6.0.0-1.alpha_softdevice.hex
+GDB_PORT_NUMBER = 8900
+
+ifeq ($(USE_SOFTDEVICE),)
+	FLASH_START_ADDRESS = 0
+else
+	FLASH_START_ADDRESS = 0x14000
+endif
+
+ifeq ($(OS),Windows_NT)
+else
+	UNAME_S := $(shell uname -s)
+	ifeq ($(UNAME_S),Linux)
+		export LD_LIBRARY_PATH := $(JLINK_ROOT):$(LD_LIBRARY_PATH)
+	endif
+	ifeq ($(UNAME_S),Darwin)
+		export DYLD_LIBRARY_PATH := $(JLINK_ROOT):$(DYLD_LIBRARY_PATH)
+	endif
+endif
+
+JLINK := $(JLINK_ROOT)/JLinkExe
+JLINKGDBSERVER := $(JLINK_ROOT)/JLinkGDBServer
+
+
+## Program device
+flash: rm-flash.jlink flash.jlink stopdebug
+	$(JLINK) $(OUTPUT_BINARY_DIRECTORY)/flash.jlink
+
+rm-flash.jlink:
+	-rm -rf $(OUTPUT_BINARY_DIRECTORY)/flash.jlink
+	
+flash.jlink:
+	echo "device nrf51822\nspeed 1000\nr\nloadbin $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME).bin, $(FLASH_START_ADDRESS)\nr\ng\nexit\n" > $(OUTPUT_BINARY_DIRECTORY)/flash.jlink
+
+flash-softdevice: #erase-all flash-softdevice.jlink stopdebug
+	# Convert from hex to binary. Split original hex in two to avoid huge (>250 MB) binary file with just 0s. 
+	$(OBJCOPY) -Iihex -Obinary --remove-section .sec3 $(SOFTDEVICE) $(OUTPUT_BINARY_DIRECTORY)/_mainpart.bin
+	$(OBJCOPY) -Iihex -Obinary --remove-section .sec1 --remove-section .sec2 $(SOFTDEVICE) $(OUTPUT_BINARY_DIRECTORY)/_uicr.bin
+	$(JLINK) $(OUTPUT_BINARY_DIRECTORY)/flash-softdevice.jlink
+
+flash-softdevice.jlink:
+	# Do magic. Write to NVMC to enable erase, do erase all and erase UICR, reset, enable writing, load mainpart bin, load uicr bin. Reset.
+	# Resetting in between is needed to disable the protections. 
+	echo "w4 4001e504 1\nloadbin \"$(OUTPUT_BINARY_DIRECTORY)/_mainpart.bin\" 0\nloadbin \"$(OUTPUT_BINARY_DIRECTORY)/_uicr.bin\" 0x10001000\nr\ng\nexit\n" > $(OUTPUT_BINARY_DIRECTORY)/flash-softdevice.jlink
+	#echo "w4 4001e504 1\nloadbin \"$(OUTPUT_BINARY_DIRECTORY)/softdevice.bin\" 0\nr\ng\nexit\n" > flash-softdevice.jlink
+
+recover: recover.jlink erase-all.jlink pin-reset.jlink
+	$(JLINK) $(OUTPUT_BINARY_DIRECTORY)/recover.jlink
+	$(JLINK) $(OUTPUT_BINARY_DIRECTORY)/erase-all.jlink
+	$(JLINK) $(OUTPUT_BINARY_DIRECTORY)/pin-reset.jlink
+
+recover.jlink:
+	echo "si 0\nt0\nsleep 1\ntck1\nsleep 1\nt1\nsleep 2\nt0\nsleep 2\nt1\nsleep 2\nt0\nsleep 2\nt1\nsleep 2\nt0\nsleep 2\nt1\nsleep 2\nt0\nsleep 2\nt1\nsleep 2\nt0\nsleep 2\nt1\nsleep 2\nt0\nsleep 2\nt1\nsleep 2\ntck0\nsleep 100\nsi 1\nr\nexit\n" > $(OUTPUT_BINARY_DIRECTORY)/recover.jlink
+
+pin-reset.jlink:
+	echo "device nrf51822\nw4 4001e504 2\nw4 40000544 1\nr\nexit\n" > $(OUTPUT_BINARY_DIRECTORY)/pin-reset.jlink
+
+erase-all: erase-all.jlink
+	$(JLINK) $(OUTPUT_BINARY_DIRECTORY)/erase-all.jlink
+
+erase-all.jlink:
+	echo "device nrf51822\nw4 4001e504 2\nw4 4001e50c 1\nw4 4001e514 1\nr\nexit\n" > $(OUTPUT_BINARY_DIRECTORY)/erase-all.jlink
+
+startdebug: stopdebug debug.jlink .gdbinit
+	$(JLINKGDBSERVER) -if swd -speed 1000 -port $(GDB_PORT_NUMBER) &
+	sleep 1
+	$(GDB) $(ELF)
+
+stopdebug:
+	-killall $(JLINKGDBSERVER)
+
+.gdbinit:
+	echo "target remote localhost:$(GDB_PORT_NUMBER)\nmonitor flash download = 1\nmonitor flash device = nrf51822\nbreak main\nmon reset\n" > .gdbinit
+
+debug.jlink:
+	echo "Device nrf51822" > $(OUTPUT_BINARY_DIRECTORY)/debug.jlink
+	
+.PHONY: flash flash-softdevice erase-all startdebug stopdebug
