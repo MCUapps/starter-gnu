@@ -1,7 +1,7 @@
 # JLink as the programmer
 JLINK_ROOT := /opt/JLink
 SOFTDEVICE := $(SDK_PATH)/../../../s110_nrf51822_6.0.0-1.alpha/s110_nrf51822_6.0.0-1.alpha_softdevice.hex
-GDB_PORT_NUMBER = 8900
+GDB_PORT_NUMBER = 2331
 
 ifeq ($(USE_SOFTDEVICE),)
 	FLASH_START_ADDRESS = 0
@@ -9,8 +9,7 @@ else
 	FLASH_START_ADDRESS = 0x14000
 endif
 
-ifeq ($(OS),Windows_NT)
-else
+ifneq ($(OS),Windows_NT)
 	UNAME_S := $(shell uname -s)
 	ifeq ($(UNAME_S),Linux)
 		export LD_LIBRARY_PATH := $(JLINK_ROOT):$(LD_LIBRARY_PATH)
